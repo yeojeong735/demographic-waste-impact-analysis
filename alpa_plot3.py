@@ -1,105 +1,114 @@
 import pandas as pd
 import matplotlib.pyplot as plt
 import numpy as np
+import io
+import csv
 
-# -------------------------------------------------------------
-# ⚠️ 사용자 정의 변수 (확정된 컬럼명 및 파일명)
-# -------------------------------------------------------------
-FILE_NAME_MSW = "./data/서울특별시 종로구_생활쓰레기 월별 발생량.csv"
-FILE_NAME_FR = "./data/서울특별시 종로구_음식물류폐기물 및 재활용품 발생량.csv"
+# 파일 이름 정의
+file_general_waste_avg = "./data/서울특별시 종로구_년_평균_생활쓰레기_발생량.csv"
+file_food_recycled = "./data/서울특별시 종로구_음식물류폐기물 및 재활용품 발생량.csv"
 
-COL_SUM = 'SUM'
-COL_FOOD = 'Food Waste'
-COL_RECYCLE = 'Recycled Waste'
-COL_TIME_MSW = 'Year and month'
-COL_TIME_FR = 'Year and month'
-TARGET_YEAR = 2019
-ROWS_FOR_2019 = 12+1
-# -------------------------------------------------------------
+# --- 1. 음식물 및 재활용 쓰레기 데이터 처리 (탭 구분자 적용) ---
 
-# 1. 각 파일을 년도별로 합산 (Aggregation First Strategy)
 try:
-    # 1-1. 생활쓰레기 (MSW) 데이터 로드 및 년도별 합산
-    df_msw = pd.read_csv(FILE_NAME_MSW, encoding='utf-8')
+    # ⭐⭐ csv 모듈을 사용하여 파일의 불규칙성을 강제 해결 ⭐⭐
+    clean_rows = []
+    # 파일을 읽을 때 줄 끝 문자(\r\n)를 자동으로 처리하도록 newline='' 설정
+    with open(file_food_recycled, 'r', encoding='utf-8', errors='ignore', newline='') as f:
+        # csv.reader를 사용하여 파일 구조를 강제로 해석
+        reader = csv.reader(f, delimiter=',')
+        for i, row in enumerate(reader):
+            if i == 0:  # 헤더는 건너뛰거나 따로 처리
+                continue
+            # 데이터는 3개 컬럼(월, 음식물, 재활용)으로 구성되어야 함
+            if len(row) >= 3:
+                # 불필요한 공백을 제거하고 필요한 3개 컬럼만 추가
+                clean_rows.append([item.strip() for item in row[:3]])
+            # 빈 행을 건너뛰는 로직
 
-    # SUM 및 Time 컬럼 클리닝 및 파싱
-    df_msw[COL_SUM] = df_msw[COL_SUM].astype(str).str.replace(r'[^\d\.]', '', regex=True)
-    df_msw[COL_TIME_MSW] = df_msw[COL_TIME_MSW].astype(str).str.replace(r'[^\w-]', '', regex=True)
+    # 깨끗해진 데이터를 Pandas DataFrame으로 변환
+    df_fr = pd.DataFrame(clean_rows, columns=['Month_Year', 'Food_Waste', 'Recycled_Waste'])
 
-    df_msw['Year'] = pd.to_datetime(df_msw[COL_TIME_MSW], format='%b-%y', errors='coerce').dt.year
-    df_msw[COL_SUM] = pd.to_numeric(df_msw[COL_SUM], errors='coerce')
-    df_msw.dropna(subset=['Year', COL_SUM], inplace=True)
-    annual_msw = df_msw.groupby('Year')[COL_SUM].sum().reset_index()
+    # 데이터 타입 변환 및 평균 계산
+    df_fr['Food_Waste'] = pd.to_numeric(df_fr['Food_Waste'], errors='coerce')
+    df_fr['Recycled_Waste'] = pd.to_numeric(df_fr['Recycled_Waste'], errors='coerce')
 
-    # 1-2. 음식물/재활용 (F&R) 데이터 로드 및 년도별 합산
-    df_fr = pd.read_csv(FILE_NAME_FR, encoding='utf-8-sig')
-
-    # Time 컬럼 클리닝 및 파싱
-    df_fr[COL_TIME_FR] = df_fr[COL_TIME_FR].astype(str).str.replace(r'[^\w-]', '', regex=True)
-    df_fr['Year'] = pd.to_datetime(df_fr[COL_TIME_FR]).dt.year
-
-    df_fr[COL_FOOD] = pd.to_numeric(df_fr[COL_FOOD], errors='coerce')
-    df_fr[COL_RECYCLE] = pd.to_numeric(df_fr[COL_RECYCLE], errors='coerce')
-    df_fr.dropna(subset=['Year', COL_FOOD, COL_RECYCLE], inplace=True)
-    annual_fr = df_fr.groupby('Year')[[COL_FOOD, COL_RECYCLE]].sum().reset_index()
-
-    # 1-3. 년도별 합산 데이터 병합 (Year 기준)
-    # 🌟 FIX: annual_msw와 annual_fr의 merge 시 불필요한 dropna 제거
-    df_annual_merged = pd.merge(
-        annual_msw,
-        annual_fr,
-        on='Year',
-        how='inner'
-    )
+    df_fr['Date'] = pd.to_datetime(df_fr['Month_Year'], errors='coerce')
+    df_fr['Year'] = df_fr['Date'].dt.year
+    df_2019_fr = df_fr[df_fr['Year'] == 2019]
+    food_waste_average = df_2019_fr['Food_Waste'].mean()
+    recycled_waste_average = df_2019_fr['Recycled_Waste'].mean()
 
 except Exception as e:
-    print(f"❌ 데이터 로드 및 년도별 합산 중 최종 오류 발생: {e}")
-    exit()
+    print(f"음식물/재활용 파일 최종 처리 오류 발생: {e}")
+    food_waste_average, recycled_waste_average = None, None
 
-# 2. 2019년 데이터 필터링 및 총량 집계
-df_target = df_annual_merged[df_annual_merged['Year'] == TARGET_YEAR].copy()
+# --- 2. 기타 쓰레기 데이터 처리 및 IndexError 방지 ---
+try:
+    with open(file_general_waste_avg, 'rb') as f:
+        data = f.read()
+    # 2. 널 바이트(b'\x00')를 제거
+    cleaned_data = data.replace(b'\x00', b'')
+    # 3. 데이터 손상을 최소화하는 'latin-1'으로 디코딩
+    cleaned_string = cleaned_data.decode('latin-1')
+    # 인코딩 및 구분자 문제 해결 코드 유지
+    df_avg = pd.read_csv(
+        io.StringIO(cleaned_string),
+        sep=',',
+        skiprows=1,  # 헤더 건너뛰기 유지
+        header=None
+        # C engine이 기본값이며, universal newline mode를 지원합니다.
+    )
+    df_avg = df_avg.iloc[:, [0, 1]].copy()
 
-if df_target.empty:
-    print(f"❌ {TARGET_YEAR}년 데이터가 두 파일 모두에 존재하지 않습니다. 모든 클리닝을 거쳤음에도 데이터가 없습니다. 원본 파일을 확인해 주세요.")
-    exit()
+    df_avg.columns = ['Year', 'Average_waste_total']
 
-# 3. 파이 차트 값 계산
-T_Total = df_target[COL_SUM].iloc[0]
-T_Food = df_target[COL_FOOD].iloc[0]
-T_Recycle = df_target[COL_RECYCLE].iloc[0]
-T_Other = T_Total - T_Food - T_Recycle
+    # ⭐⭐ Year 컬럼을 숫자로 확실하게 변환하여 필터링 오류를 방지합니다. ⭐⭐
+    df_avg['Year'] = pd.to_numeric(df_avg['Year'], errors='coerce').astype('Int64')
 
-# T_Other가 음수일 경우 0으로 처리
-T_Other = max(0, T_Other)
+    # 2019년 데이터 필터링
+    df_2019_avg = df_avg[df_avg['Year'] == 2019]
 
-if T_Total <= 0:
-    print("❌ 2019년 총 쓰레기 발생량이 0 이하입니다. 데이터를 확인해 주세요.")
-    exit()
+    # 필터링 결과가 비어있는지 확인하고 오류가 나면 처리
+    if df_2019_avg.empty:
+        raise ValueError("년평균 파일에서 2019년 데이터가 발견되지 않았습니다. 파일 내용을 확인해 주세요.")
 
-# 4. 파이 차트 데이터 준비
-labels = ['음식물류 폐기물', '재활용품', '기타/잔재물']
-sizes = [T_Food, T_Recycle, T_Other]
-colors = ['#ff9999', '#66b3ff', '#99ff99']
+    # 데이터 추출
+    total_waste_average = df_2019_avg['Average_waste_total'].iloc[0]
 
-# 5. 시각화: 파이 차트
-plt.rcParams['font.family'] = 'Malgun Gothic'
-plt.rcParams['axes.unicode_minus'] = False
+    # 기타 쓰레기 평균 계산
+    other_waste_average = total_waste_average - food_waste_average - recycled_waste_average
 
-fig, ax = plt.subplots(figsize=(8, 8))
+except Exception as e:
+    print(f"데이터 처리 오류 발생: {e}")
+    other_waste_average = None
 
+# --- 3. 파이 차트 생성 ---
+if all(v is not None for v in [other_waste_average, food_waste_average, recycled_waste_average]):
+    data = [food_waste_average, recycled_waste_average, other_waste_average]
+    labels = ['음식물 쓰레기', '재활용 쓰레기', '기타 쓰레기']
 
-# 퍼센트 텍스트 포맷 함수 (총 톤수도 함께 표시)
-def func(pct, allvals):
-    absolute = int(np.round(pct / 100. * np.sum(allvals)))
-    return f"{pct:.1f}%\n({absolute:,.0f} 톤)"
+    data = [max(0, d) for d in data]
 
+    plt.figure(figsize=(9, 9))
 
-ax.pie(sizes, autopct=lambda pct: func(pct, sizes), startangle=90, colors=colors,
-       wedgeprops={'edgecolor': 'black', 'linewidth': 0.5},
-       labels=labels, textprops={'fontsize': 12})
+    plt.pie(
+        data,
+        labels=labels,
+        autopct='%1.1f%%',
+        startangle=90,
+        textprops={'fontsize': 12, 'color': 'black'}
+    )
 
-ax.set_title(f'🗑️ 종로구 생활쓰레기 성상 비율 ({TARGET_YEAR}년 총합)', fontsize=16, pad=20)
-ax.axis('equal')
+    plt.title('2019년 종로구 폐기물 유형별 월평균 비율', fontsize=15)
 
-plt.tight_layout()
-plt.show()
+    total_average = sum(data)
+    legend_labels = [f'{l}: {d:.2f}톤 ({d / total_average:.1%})' for l, d in zip(labels, data)]
+    plt.legend(legend_labels, title="유형 (단위: 톤/월)", loc="lower center", bbox_to_anchor=(0.5, -0.1), ncol=1)
+
+    plt.show()
+
+    print("\n--- 2019년 폐기물 월평균 (톤/월) ---")
+    print(f"음식물 쓰레기 평균: {food_waste_average:.2f}")
+    print(f"재활용 쓰레기 평균: {recycled_waste_average:.2f}")
+    print(f"기타 쓰레기 평균: {other_waste_average:.2f}")

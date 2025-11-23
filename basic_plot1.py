@@ -6,7 +6,7 @@ import numpy as np
 
 FINAL_FILE_NAME = "./data/서울특별시 종로구_생활쓰레기 월별 발생량.csv"
 WASTE_COLUMN = 'SUM'
-TIME_COLUMN_FOR_PARSING = 'Year and month of import'
+TIME_COLUMN_FOR_PARSING = 'Year and month'
 # -------------------------------------------------------------
 
 try:
